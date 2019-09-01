@@ -2,6 +2,7 @@
 import fcntl
 import re
 import traceback
+import sys
 from subprocess import check_output, CalledProcessError
 from vyos.configtree import ConfigTree
 from  os import path 
@@ -72,6 +73,12 @@ class Locker:
              fcntl.flock(self._f, fcntl.LOCK_UN)
              close(self._f)
              self._f = None
+
+    def __enter__(self):
+        self.lock_and_watit()
+
+    def __exit__(self):
+        self.unlock()
 
     def __del__(self):
         self.unlock()
@@ -286,7 +293,7 @@ def main(if_name, if_mac):
             seed = 0
 
         # Check name availabillity or increment the if_name until we get a match
-        for x in xrange(seed, 10000):
+        for x in range(seed, 10000):
             temp_name = 'eth{}'.format(x)
             if not temp_name in hwids:
                 # The interface is not in persistant database
@@ -301,18 +308,22 @@ def main(if_name, if_mac):
 
     log_to_dmesg("vyos_nic_name: New name for {} is {}".format(if_name, new_name))
     
-
-
     return new_name
 
 
-    # Unlock for next instance to start
-
 
 if __name__ == "__main__":
-    # Step 1: Lock so only one instance at a time
-    lock = Locker('/run/udev/ifname.lock')
-    lock.lock_and_wait()
+    if len(sys.argv) == 2:
+        # Step 1: Lock so only one instance at a time, this automatically unlocks on with end
+        with Locker('/run/udev/ifname.lock') as lock:
+            # Fetch new name
+            name = main(sys.argv[0], sys.argv[1])
+            if name:
+                print(name)
+            else:
+                log_to_dmesg("vyos_nic_name: No new name selected.. :/ ")
 
-    name = main(sys.argv[0], sys.argv[1])
-    lock.unlock() 
+
+    else:
+        sys.exit("Syntax: vyos_nic_name.py [initial-name] [mac-address]")
+   
