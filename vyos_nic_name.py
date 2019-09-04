@@ -7,6 +7,7 @@ from subprocess import check_output, CalledProcessError
 from vyos.configtree import ConfigTree
 from  os import path 
 from time import sleep
+import errno
 """
 Pre boot workflow
 NB: All debuging needs to be returned to stderr or anoter logging location, this is because stdout is used to return data to UDEV
@@ -43,7 +44,7 @@ def vyos_config_loaded():
     """ Returns True if the router configuration is loaded """
     # When this is False, the router is still booting and we could also be in ro-root
     # If this directory exists the router have loaded its configuration
-   return path.isdir('/opt/vyatta/config/active/interfaces') 
+    return path.isdir('/opt/vyatta/config/active/interfaces') 
 
 
 class Locker:
@@ -51,37 +52,37 @@ class Locker:
     def __init__(self, filename):
         self._filename = filename
         self._f = None
-    def wait_and_lock():
+    def wait_and_lock(self):
         """ Try to lock a file and wait until lock is aquired """
         # Waits forever to get a lock on the lockfile
         # If an unrelated error occures a exception is raised 
         self._f = open(self._filename, 'w')
-        while true:
+        while True:
             try:
-                fcntl.flock(filename, fcntl.LOCK_EX | dcnt.LOCK_NM)
+                fcntl.flock(self._filename, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return
             except IOError as e:
                 if e.errno == errno.EAGAIN:
                     # Do not raise error when waiting to aquire lock
-                    time.sleep(0.1)
-                else
+                    sleep(0.1)
+                else:
                     # Raise on all unrelated errors
                     raise
 
-     def unlock(self):
-         if self._f:
-             fcntl.flock(self._f, fcntl.LOCK_UN)
-             close(self._f)
-             self._f = None
+    def unlock(self):
+        if self._f:
+            fcntl.flock(self._f, fcntl.LOCK_UN)
+            self._f.close()
+            self._f = None
 
     def __enter__(self):
-        self.lock_and_watit()
+        self.wait_and_lock()
 
-    def __exit__(self):
+    def __exit__(self, type, value, traceback):
         self.unlock()
 
     def __del__(self):
-        self.unlock()
+        self.unlock() 
 
 
 def read_hwids_from_configfile(filename):
@@ -167,7 +168,7 @@ def save_persistant_names_file(filename, interface, mac):
             
         lines.append('{} = {}'.format(interface, mac))
         f.seek(0)
-    except exception as e:
+    except Exception:
         log_to_dmesg('vyos_nic_name: save_persistant_names_file: Exception: {}'.format(traceback.format_exc()))
 
     with open(filename, 'w') as f:
@@ -207,13 +208,13 @@ def find_interface_in_old_config(if_mac):
 
         if path.isfile('/config/config.boot'):
             old_names = read_hwids_from_configfile('/config/config.boot')
-            for name, mac in old_names.iteritems():
+            for name, mac in old_names.items():
                 if mac == if_mac:
                     return name
         else:
             log_to_dmesg("vyos_nic_name: Configuration read from persistant interface name file, skipping boot configuration")
 
-    except Exception as E:
+    except Exception:
         log_to_dmesg("vyos_nic_name: Exception reading boot configuration file: \n{}".format(traceback.format_exc()))
     
     return ''
@@ -229,12 +230,12 @@ def main(if_name, if_mac):
     if path.isfile('/config/interface-names.persist'):
         try: 
             hwids = read_persistant_names_file('/config/interface-names.persist')
-        except Exception as E:
+        except Exception:
             log_to_dmesg("vyos_nic_name: Exception reading persistant interface name file: \n{}".format(traceback.format_exc()))
 
     
     #3:  if interface is found return without futher processing
-    for new_name, mac in hwids.iteritems():
+    for new_name, mac in hwids.items():
         if mac == if_mac:
             return new_name
 
@@ -251,7 +252,7 @@ def main(if_name, if_mac):
         try:
             new_assigned = read_persistant_names_file('/run/udev/interface-names.tmp')
             hwids.update(new_assigned)
-        except Exception as E:
+        except Exception:
             log_to_dmesg("vyos_nic_name: cant read temp-persistant-file Exception: {}".format(traceback.format_exc()))
     
 
@@ -280,7 +281,7 @@ def main(if_name, if_mac):
     new_name = biosdevname(if_name)
     if not new_name:
         # No name returned from biosdevname, setting eth0 as seed
-        new_name = eth0
+        new_name = 'eth0'
 
     if new_name in hwids:
         # Biosdevname index is in use, wee need to find a new one
@@ -288,7 +289,7 @@ def main(if_name, if_mac):
         # Fetch index from new name as a seed, or use 0 as seed
         try:
             seed = int(re.search(r'\d+$', new_name)[0])
-        except Exception as E:
+        except Exception:
             log_to_dmesg("vyos_nic_name: Exception fetching index from biosdevname, proceeding with seed = eth0, {}".format(traceback.format_exc()))
             seed = 0
 
