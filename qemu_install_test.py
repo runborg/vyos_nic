@@ -25,15 +25,15 @@ parser.add_argument('disk', help='name of disk image file',
 parser.add_argument('--keep', help='Do not remove disk-image after installation', 
                               action='store_true',
                               default=False)
-parser.add_argument('--silent', help='Do not show output from system unless an error has occured', 
+parser.add_argument('--silent', help='Do not show output on stdout unless an error has occured', 
                               action='store_true',
-                              default=False)                           
+                              default=False)   
+parser.add_argument('--debug', help='Send all debug output to stdout',
+                               action='store_true', 
+                               default=False)                      
+parser.add_argument('--logfile', help='Log to file')  
+
 args = parser.parse_args()
-
-# Logging taken from here: https://mail.python.org/pipermail/python-list/2010-March/570847.html
-# this will be the method called by the pexpect object to log
-
-
 
 class StreamToLogger(object):
     """
@@ -43,31 +43,47 @@ class StreamToLogger(object):
         self.logger = logger
         self.log_level = log_level
         self.linebuf = b''
+        self.ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
 
     def write(self, buf):
-        if b'\n' in buf:
-            for line in buf.rstrip().splitlines():
-                self.logger.log(self.log_level, line.rstrip())
-        else:
-            self.linebuf += buf
+        self.linebuf += buf
+        #print('.')
+        while b'\n' in self.linebuf:
+            f = self.linebuf.split(b'\n', 1)
+            if len(f) == 2:
+                self.logger.debug(self.ansi_escape.sub('', f[0].decode(errors="replace").rstrip()))
+                self.linebuf = f[1]
+            #print(f)
+
 
     def flush(self):
         pass
 
+
 # Setting up logger
 log = logging.getLogger()
 log.setLevel(logging.DEBUG)
-# give the logger the methods required by pexpect
 
 stl = StreamToLogger(log)
-#log.write = stl.write
-#log.flush = _doNothing
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 handler = logging.StreamHandler(sys.stdout)
-handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+if args.silent:
+    handler.setLevel(logging.ERROR)
+elif args.debug:
+    handler.setLevel(logging.DEBUG)
+else:
+    handler.setLevel(logging.INFO)
+
 handler.setFormatter(formatter)
 log.addHandler(handler)
+
+
+if args.logfile:
+    filehandler = logging.FileHandler(args.logfile)
+    filehandler.setLevel(logging.DEBUG)
+    filehandler.setFormatter(formatter)
+    log.addHandler(filehandler)
 
 
 
@@ -77,19 +93,18 @@ else:
     output = sys.stdout.buffer
 
 if not os.path.isfile(args.iso):
-    sys.exit("# ERROR: Unable to find iso image to install")
+    log.error("Unable to find iso image to install")
+    sys.exit(1)
 
 
 # Creating diskimage!!
 
 if not os.path.isfile(args.disk):
-    print("#"*80)
-    print("#  Creating Disk")
-    print("#"*80)
+    log.info("Creating Disk image {}".format(args.disk))
     c = subprocess.check_output(["qemu-img", "create", args.disk, "2G"])
-    print(c.decode())
+    log.debug(c.decode())
 else:
-    print("# Diskimage already exists, using the existing one")
+    log.info("Diskimage already exists, using the existing one")
 
 
 
@@ -97,10 +112,7 @@ try:
     #################################################
     # Installing image to disk
     #################################################
-    print("\n\n\n")
-    print("#"*80)
-    print("#  Installing system")
-    print("#"*80)
+    log.info("Installing system")
 
     cmd = """qemu-system-x86_64 \
     -name "TESTVM" \
@@ -113,7 +125,7 @@ try:
     -boot d -cdrom {CD} \
     -drive format=raw,file={DISK}
     """.format(CD=args.iso, DISK=args.disk)
-    print("Executing command: {}".format(cmd))
+    log.debug("Executing command: {}".format(cmd))
     c = pexpect.spawn(cmd, logfile=stl)
 
     #################################################
@@ -123,20 +135,25 @@ try:
         c.expect('Automatic boot in', timeout=10)
         c.sendline('')
     except pexpect.TIMEOUT:
-        print("\n#  Did not find grub countdown window, ignoring")
-    
+        log.warning("Did not find grub countdown window, ignoring")
+
+    log.info('Waiting for login prompt')
     c.expect('[Ll]ogin:', timeout=120)
     c.sendline('vyos')
     c.expect('[Pp]assword:', timeout=10)
     c.sendline('vyos')
     c.expect('vyos@vyos:~\$')
+    log.info('Logged in!')
+
 
     #################################################
     # Installing into VyOS system
     #################################################
+    log.info("Starting installer")
     c.sendline('install image')
     c.expect('\nWould you like to continue?.*:')
     c.sendline('yes')
+    log.info("Partitioning disk")
     c.expect('\nPartition.*:')
     c.sendline('')
     c.expect('\nInstall the image on.*:')
@@ -145,10 +162,13 @@ try:
     c.sendline('Yes')
     c.expect('\nHow big of a root partition should I create?.*:')
     c.sendline('')
+    log.info('Disk partitioned, installing')
     c.expect('\nWhat would you like to name this image?.*:')
     c.sendline('')
+    log.info('Copying files')
     c.expect('\nWhich one should I copy to.*:', timeout=300)
     c.sendline('')
+    log.info('Files Copied!')
     c.expect('\nEnter password for user.*:')
     c.sendline('vyos')
     c.expect('\nRetype password for user.*:')
@@ -156,32 +176,30 @@ try:
     c.expect('\nWhich drive should GRUB modify the boot partition on.*:')
     c.sendline('')
     c.expect('\nvyos@vyos:~\$')
+    log.info('system installed, shutting down')
 
     #################################################
     # Powering down installer
     #################################################
+    log.info("Shutting down installation system")
     c.sendline('poweroff')
     c.expect('\nAre you sure you want to poweroff this system.*\]')
     c.sendline('Y')
-    print("# Shutting down virtual machine")
     for i in range(30):
-        print("# Waiting...")
+        log.info("Waiting for shutdown...")
         if not c.isalive():
-            print("# VM is shut down!")
+            log.info("VM is shut down!")
             break;
         time.sleep(10) 
     else:
-        print("# VM Did not shut down after 300sec")
+        log.error("VM Did not shut down after 300sec, killing")
     c.close()
 
 
     #################################################
     # Booting installed system
     #################################################
-    print("\n\n\n")
-    print("#"*80)
-    print("# Booting ")
-    print("#"*80)
+    log.info("Booting installed system")
 
     cmd = """qemu-system-x86_64 \
     -name "TESTVM" \
@@ -194,8 +212,8 @@ try:
     -drive format=raw,file={DISK}
     """.format(DISK=args.disk)
 
-    print("Executing command: {}".format(cmd))
-    c = pexpect.spawn(cmd, logfile=log)
+    log.debug('Executing command: {}'.format(cmd))
+    c = pexpect.spawn(cmd, logfile=stl)
 
     #################################################
     # Logging into VyOS system
@@ -204,23 +222,22 @@ try:
         c.expect('The highlighted entry will be executed automatically in', timeout=10)
         c.sendline('')
     except pexpect.TIMEOUT:
-        print("\n#  Did not find grub countdown window, ignoring")
+        log.warning("Did not find grub countdown window, ignoring")
 
+    log.info('Waiting for login prompt')
     c.expect('[Ll]ogin:', timeout=120)
     c.sendline('vyos')
     c.expect('[Pp]assword:', timeout=10)
     c.sendline('vyos')
-
     c.expect('vyos@vyos:~\$')
+    log.info('Logged in!')
+
 
 
     #################################################
     # Executing test-suite
     #################################################
-    print("\n\n\n")
-    print("#"*80)
-    print("# Executing test-suite ")
-    print("#"*80)
+    log.info("Executing test-suite ")
 
     def cr(child, command):
         child.sendline(command)
@@ -234,51 +251,45 @@ try:
         elif i==1:
             raise Exception('Set syntax failed :/')
         elif i==2:
-            print("# WTF? did not find VyOS-smoketest, this should be an exception")
+            log.error("Did not find VyOS-smoketest, this should be an exception")
             #raise Exception("WTF? did not find VyOS-smoketest, this should be an exception")
     cr(c, '/usr/bin/vyos-smoketest')
 
-    print("\n\n\n")
-    print("#"*80)
-    print("# Smoke test status")
-    print("#"*80)
-    data = c.before.decode()
+    log.info("Smoke test status")
+    #data = c.before.decode()
 
     #################################################
     # Powering off system
     #################################################
-    print("\n\n\n")
-    print("#"*80)
-    print("# Booting ")
-    print("#"*80)
+    log.info("Powering off system ")
     c.sendline('poweroff')
     c.expect('\nAre you sure you want to poweroff this system.*\]')
     c.sendline('Y')
-    print("# Shutting down virtual machine")
+    log.info("Shutting down virtual machine")
     for i in range(30):
-        print("# Waiting...")
+        log.info("Waiting for shutdown...")
         if not c.isalive():
-            print("# VM is shut down!")
+            log.info("VM is shut down!")
             break;
         time.sleep(10) 
     else:
+        log.error("VM Did not shut down after 300sec")
         raise Exception("VM Did not shut down after 300sec")
     c.close()
 
 except pexpect.exceptions.TIMEOUT:
-    print("Timeout waiting for VyOS system")
-    traceback.print_exc()
+    log.error("Timeout waiting for VyOS system")
+    log.error(traceback.format_exc())
     EXCEPTION = 1
 
 except pexpect.exceptions.ExceptionPexpect:
-    print("Exeption while executing QEMU")
-    print("Is qemu working on this system?")
-    traceback.print_exc()
+    log.error("Exeption while executing QEMU")
+    log.error("Is qemu working on this system?")
+    log.error(traceback.format_exc())
     EXCEPTION = 1
 
 except Exception:
-    print("An unknown error occured when installing the VyOS system")
-    print("Traceback: ")
+    log.error("An unknown error occured when installing the VyOS system")
     traceback.print_exc()
     EXCEPTION = 1
 
@@ -287,23 +298,18 @@ except Exception:
 #################################################
 # Cleaning up
 #################################################
-print("\n\n\n")
-print("#"*80)
-print("# Cleaning up")
-print("#"*80)
+log.info("Cleaning up")
 
 if not args.keep:
-    print("Removing disk file: {}".format(args.disk))
+    log.info("Removing disk file: {}".format(args.disk))
     try:
         os.remove(args.disk)
     except Exception:
-        print("Exception while removing diskimage")
-        traceback.print_exc()
+        log.error("Exception while removing diskimage")
+        log.error(traceback.format_exc())
         EXCEPTION = 1
 
 if EXCEPTION:
-    print("")
-    print("Hmm...")
-    print("System got an exception while processing")
-    print("The ISO is not considered usable")
+    log.error("Hmm... System got an exception while processing")
+    log.error("The ISO is not considered usable")
     sys.exit(1)
