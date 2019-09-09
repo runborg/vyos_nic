@@ -142,7 +142,7 @@ try:
     c.sendline('vyos')
     c.expect('[Pp]assword:', timeout=10)
     c.sendline('vyos')
-    c.expect('vyos@vyos:~\$')
+    c.expect(r'vyos@vyos:~\$')
     log.info('Logged in!')
 
 
@@ -158,7 +158,7 @@ try:
     c.sendline('')
     c.expect('\nInstall the image on.*:')
     c.sendline('')
-    c.expect('\nContinue\?.*:')
+    c.expect(r'\nContinue\?.*:')
     c.sendline('Yes')
     c.expect('\nHow big of a root partition should I create?.*:')
     c.sendline('')
@@ -175,7 +175,7 @@ try:
     c.sendline('vyos')
     c.expect('\nWhich drive should GRUB modify the boot partition on.*:')
     c.sendline('')
-    c.expect('\nvyos@vyos:~\$')
+    c.expect(r'\nvyos@vyos:~\$')
     log.info('system installed, shutting down')
 
     #################################################
@@ -183,13 +183,13 @@ try:
     #################################################
     log.info("Shutting down installation system")
     c.sendline('poweroff')
-    c.expect('\nAre you sure you want to poweroff this system.*\]')
+    c.expect(r'\nAre you sure you want to poweroff this system.*\]')
     c.sendline('Y')
     for i in range(30):
         log.info("Waiting for shutdown...")
         if not c.isalive():
             log.info("VM is shut down!")
-            break;
+            break
         time.sleep(10) 
     else:
         log.error("VM Did not shut down after 300sec, killing")
@@ -229,7 +229,7 @@ try:
     c.sendline('vyos')
     c.expect('[Pp]assword:', timeout=10)
     c.sendline('vyos')
-    c.expect('vyos@vyos:~\$')
+    c.expect(r'vyos@vyos:~\$')
     log.info('Logged in!')
 
 
@@ -244,7 +244,7 @@ try:
         i = child.expect(['\n +Invalid command:', 
                         '\n +Set failed', 
                         'No such file or directory', 
-                        '\n\S+@\S+[$#]'])
+                        r'\n\S+@\S+[$#]'])
 
         if i==0:
             raise Exception('Invalid command detected')
@@ -263,14 +263,14 @@ try:
     #################################################
     log.info("Powering off system ")
     c.sendline('poweroff')
-    c.expect('\nAre you sure you want to poweroff this system.*\]')
+    c.expect(r'\nAre you sure you want to poweroff this system.*\]')
     c.sendline('Y')
     log.info("Shutting down virtual machine")
     for i in range(30):
         log.info("Waiting for shutdown...")
         if not c.isalive():
             log.info("VM is shut down!")
-            break;
+            break
         time.sleep(10) 
     else:
         log.error("VM Did not shut down after 300sec")
