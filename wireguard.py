@@ -3,20 +3,23 @@ import subprocess
 
 
 def wireguard_dump():
-    _f = subprocess.check_output(["wg", "show", "all", "dump"])
+    """Dump wireguard data in a python friendly way."""
     last_device=None
     output = {}
-    for line in _f.decode().split('\n'):
+    
+    # Dump wireguard connection data
+    _f = subprocess.check_output(["wg", "show", "all", "dump"]).decode()
+    for line in _f.split('\n'):
         if not line:
           # Skip empty lines and last line
           continue
         items = line.split('\t')
 
         if last_device != items[0]:
-            last_device = items[0]
             # We are currently entering a new node
             device, private_key, public_key, listen_port, fw_mark = items
-
+            last_device = device
+            
             output[device] = {
                 'private_key': None if private_key == '(none)' else private_key,
                 'public_key': None if public_key == '(none)' else public_key,
@@ -27,10 +30,14 @@ def wireguard_dump():
         else:
             # We are entering a peer
             device, public_key, preshared_key, endpoint, allowed_ips, latest_handshake, transfer_rx, transfer_tx, persistent_keepalive = items
+            if allowed_ips == '(none)':
+                allowed_ips = []
+            else:
+                allowed_ips = allowed_ips.split('\t')
             output[device][public_key] = {
                 'preshared_key': None if preshared_key == '(none)' else preshared_key,
                 'endpoint': None if endpoint == '(none)' else endpoint,
-                'allowed_ips': allowed_ips.split(','),
+                'allowed_ips': allowed_ips,
                 'latest_handshake': None if latest_handshake == '0' else int(latest_handshake),
                 'transfer_rx': int(transfer_rx),
                 'transfer_tx': int(transfer_tx),
