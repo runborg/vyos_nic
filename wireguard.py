@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import subprocess
+from datetime import datetime
 
 
 def wireguard_dump():
@@ -38,7 +39,7 @@ def wireguard_dump():
                 'preshared_key': None if preshared_key == '(none)' else preshared_key,
                 'endpoint': None if endpoint == '(none)' else endpoint,
                 'allowed_ips': allowed_ips,
-                'latest_handshake': None if latest_handshake == '0' else int(latest_handshake),
+                'latest_handshake': None if latest_handshake == '0' else datetime.fromtimestamp(int(latest_handshake)),
                 'transfer_rx': int(transfer_rx),
                 'transfer_tx': int(transfer_tx),
                 'persistent_keepalive': None if persistent_keepalive == 'off' else int(persistent_keepalive),
@@ -47,4 +48,9 @@ def wireguard_dump():
             
 if __name__ == "__main__":
     import json
-    print(json.dumps(wireguard_dump(), indent=4))
+
+    def myconverter(o):
+        if isinstance(o, datetime):
+            return o.__str__()
+    
+    print(json.dumps(wireguard_dump(), indent=4, default=myconverter))
